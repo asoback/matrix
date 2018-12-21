@@ -1,0 +1,349 @@
+#!/bin/bash
+
+# Andrew Soback
+# CS 344
+# Program 1, Matrix
+
+# This file contains five matrix functions which precede main code to handle arguments
+
+# Dims function, argument: 1 matrix as a file
+# Success prints dimentions to stdout
+# Error prints nothing to stdout and an error msg to stderr
+# This function only counts the number of items in the first column, and how many rows there are
+# It does not check for invalid matrices
+dims(){
+	# Checks for proper argument count (1)
+	if [ $# -ne 1 ]
+	then
+		# Send error message to stderr, and return 1
+		echo "Incorrect number of arguments for matrix dims. Dimentions calculated from exactly one matrix" 1>&2
+		exit 1
+	else
+		rows=0
+		# These trap statements in each function catch CTRL-c interupts and send an error msg to stderr before exiting with a 1
+		# Learned from canvas instruction page
+		trap "echo 'Interupted while running Dims function' >&2; exit 1" SIGINT
+
+		# count rows with each successful read of a line
+		while read myLine
+		do
+			# On first iteration, use a for loop to get column count
+			if [ $rows -eq 0 ]
+			then
+				cols=0
+				for i in $myLine
+				do
+					if [ i != '\t' ] && [ i != '\n' ]
+					then
+						((cols++))
+					fi
+				done
+			fi
+			((rows++))
+		done < $1
+		echo "$rows $cols"
+	fi
+}
+
+# Transpose recieves one matrix as an argument
+# Error prints nothing to stdout and and error to stderr. Returns 1
+# Success prints the transposed matrix to stdout
+transpose(){
+	if [ $# -ne 1 ]
+	then
+		echo "Incorrect number of arguments for Transpose(). Takes exactly one file containing a matrix as argument" 1>&2
+		exit 1
+	fi
+
+	# Gets the count of rows and columns
+	tmpfile="temp$$"
+	dims $1 >$tmpfile
+	rows=$(cut -d ' ' -f 1 $tmpfile)
+	cols=$(cut -d ' ' -f 2 $tmpfile)
+	rm $tmpfile
+
+	# cut 1st column out of matrix
+	# This is to start the temp file, and overwrite if one already exists.
+	tempfile="mTmpFile$$"
+	# -f in cut gets the first field, described in the cut man page.
+	cutout=$(cut -f 1 $1 | tr '\n' '\t') # transforms column into a row
+	cutout=${cutout%?} # Removes last char from string
+	echo "$cutout" > $tempfile
+
+	# Gets remaining columns to transform	
+	field=2
+
+	trap "echo 'Interupted while running Transpose function' >&2; rm $tempfile; exit 1" SIGINT
+
+	# use of seq came from https://stackoverflow.com/a/169517
+	for num in $(seq 2 $cols) # for loop range 2 to the number of columns
+	do
+		cutout=$(cut -f $field $1 | tr '\n' '\t')
+		cutout=${cutout%?}
+		echo "$cutout" >> $tempfile
+		((field++))	
+	done
+	
+	#print out the file contents and then delete the tmpfile
+	cat $tempfile
+	rm $tempfile
+}
+
+# Adds all of the elements in each column and divideds them by the count to get the mean
+mean(){
+	if [ $# -ne 1 ]
+	then
+		echo "Incorrect number of arguments for mean()" 1>&2
+		return 1
+	fi
+
+	# creates the file if it does not exist
+	touch meanTmp$$
+	cols=$(dims $1 | cut -d " " -f 2)
+	count=$(dims $1 | cut -d " " -f 1)
+	trap "echo 'Interupted while running Mean function' >&2; rm meanTmp$$; exit 1" SIGINT
+
+	# From 1 to the number of columns, for each item in each column
+	# Add the items together and divide by the count to get the mean
+	for i in $(seq $cols)
+	do
+		total=0
+		column=$(cut -f $i $1)
+		for each in $column
+		do
+			total=$(expr $total + $each)
+		done
+		# Calculate the mean
+		# Rounding from canvas instruction
+ 		meanVar=$((($total + ($count/2)*( ($total>0)*2-1))/$count))
+
+		if [ $i -eq $cols ]
+		then	
+			printf "%s\n" "$meanVar" >> meanTmp$$
+		else
+			printf "%s\t" "$meanVar" >> meanTmp$$
+		fi
+
+	done
+	cat meanTmp$$
+	rm meanTmp$$
+	return 0
+}
+
+# Adds two equal dimentioned matrices
+add(){
+	#check to ensure there are two arguments.
+	if [ $# -ne 2 ]
+	then
+		echo "Incorrect number of arguments for add()" 1>&2
+		exit 1
+	fi
+	
+	#check dimentions of matrices
+	temp1="tempfile1$$"
+	temp2="tempfile2$$"
+	dims $1 1>$temp1
+	dims $2 1>$temp2
+ 	# Use of cmp from https://stackoverflow.com/a/12736416
+	# -s is silent, does not display differences between files.
+	if cmp -s "$temp1" "$temp2"
+	then
+		newtemp="tempfile3$$"
+		trap "echo 'Interupted while running add function' >&2; rm $newtemp; exit 1" SIGINT
+
+		# files are the same size, add each element.
+		# Reading from both files came from piazza discussion.
+		# question from Sat 22 "Best way to read input from multiple files",
+		while IFS=$'\t' read -a m1Line <&3 && read -a m2Line <&4 #IFS is the internal field seperator. -a puts result in array.
+		do
+			len=${#m1Line[@]}
+			for i in `seq 0 $(expr $len - 1)`;
+			do
+				num1=${m1Line[i]}
+				num2=${m2Line[i]}
+				res=$(( $num1 + $num2 ))
+				if [ $i -eq $(($len -1 )) ]
+				then
+					printf "%s\n" "$res" >>$newtemp
+				else
+					printf "%s\t" "$res" >>$newtemp
+				fi
+			done
+		done 3<$1 4<$2
+		cat $newtemp
+	fi
+	rm tempfile1$$
+	rm tempfile2$$
+	rm tempfile3$$
+}
+
+multiply(){
+	#check to ensure there are two arguments.
+	if [ $# -ne 2 ]
+	then
+		echo "Incorrect number of arguments for multiply()" 1>&2
+		exit 1
+	fi
+	#check to see if the sizes match - m1 cols = m2 rows
+	temp1="tempfile1$$"
+	temp2="tempfile2$$"
+	dims $1 1>$temp1 #puts results of dims in a temp file
+	dims $2 1>$temp2
+	m1Cols=$(cut -d ' ' -f 2 $temp1) # -d ' '  -> deliminate fields by space
+	m2Rows=$(cut -d ' ' -f 1 $temp2)
+
+	m2Cols=$(cut -d ' ' -f 2 $temp2) #Not sure if these two are neccessary yet
+	m1Rows=$(cut -d ' ' -f 1 $temp1)
+	rm $temp1
+	rm $temp2
+
+	#ensure that matrix 1 columns are the same amount as matrix 2 rows
+	if [ "$m1Cols" = "$m2Rows" ]
+	then
+		#Do the multiplication here
+		result="matrixResultFile$$"
+		trap "echo 'Interupted while running multiply function' >&2; rm $result; exit 1" SIGINT
+
+		while read row   # For each row in M1
+		do
+			total=0
+			i=1
+			while [ $i -le $m2Cols ] # For each column in M2
+			do
+				col=$(cut -f $i $2 | tr '\n' '\t') # Get the column and transform it into a row
+				((total=0))
+				for j in `seq 1 $m2Rows`; # Do the multiplication of each row/column, item by item
+				do
+					x=$(echo "$row" | cut -f $j)
+					y=$(echo "$col" | cut -f $j)
+					res=$(($x*$y))
+					total=$(($total+$res))
+				done
+
+				# tabs and newlines to create resulting matrix
+				if  [ "$i" -lt "$m2Cols" ]
+				then
+					printf "%s\t" "$total" >> $result
+				else
+					printf "%s\n" "$total" >> $result
+				fi
+				((i++))	
+			done
+
+		done < $1
+
+		cat $result
+		rm $result
+	else
+		echo "Mismatch of sizes" >&2
+		exit 1
+	fi
+}
+
+#Check what the arguments are, and if they are valid.
+#Later, add functions to do the stuff thats wanted
+#There needs to be at least 2 arguments, or 3
+
+# Check args
+if [ $# -ge 1 ] && [ $# -le 3 ]
+then
+	# Dims can take either 1 argument, or 
+	# a piped in matrix on stdin
+	# Compares against 2 arguments because the first is always the command itself
+	if [ $1 = "dims" ] && [ $# -eq 2 ]
+	then
+		if [ -f "$2" ] && [ -r "$2" ]
+		then
+			dims $2
+		else
+			echo "File does not exist" 1>&2
+			exit 1
+		fi
+	elif [ $1 = "dims" ] && [ $# -eq 1 ]
+	then
+		# read from piped in stdin
+		# source: stackoverflow.com/a/17847967
+		tmp="tempDims$$"
+		while read -r line
+		do
+			echo "$line" >>$tmp
+		done		
+		dims $tmp
+		rm $tmp
+
+	# Transpose and 1 argument
+	# Then Transpose and no argument with a piped in matrix on stdin
+	elif [ $1 = "transpose" ] && [ $# -eq 2 ]
+	then
+		if [[ -f "$2" && -r "$2" ]]
+		then
+			transpose $2
+		else
+			echo "File does not exist" 1>&2
+			exit 1
+		fi
+	elif [ $1 = "transpose" ] && [ $# -eq 1 ]
+	then
+		tmp="tempTrans$$"
+		while read -r line
+		do
+			echo "$line" >>$tmp
+		done		
+		transpose $tmp
+		rm $tmp
+
+	# Mean also takes either 1 argument
+	# or a matrix on stdin
+	elif [ $1 = "mean" ] && [ $# -eq 2 ]
+	then
+		if [[ -f "$2" && -r "$2" ]]
+		then
+			mean $2
+		else
+			echo "File does not exist" 1>&2
+			exit 1
+		fi
+	elif [ $1 = "mean" ] && [ $# -eq 1 ]
+	then
+		tmp="mainTempMean$$"
+		while read -r line
+		do
+			echo "$line" >>$tmp
+		done		
+		mean $tmp
+		retVar=$?
+		rm $tmp
+		if [ "$retVar" -eq 1 ]
+		then
+			exit 1
+		fi
+		exit 0
+	# Add with exactly 2 arguments or error to stderr
+	elif [ $1 = "add" ] && [ $# -eq 3 ]
+	then
+		add $2 $3
+	elif [ $1 = "add" ] && [ $# -ne 3 ]
+	then
+		echo "add expects exactly two matrix arguments" 1>&2
+		exit 1
+
+	# Multiply also takes exactly 2 arguments or error
+	elif [ $1 = "multiply" ] && [ $# = 3 ]
+	then
+		multiply $2 $3
+	elif [ $1 = "multiply" ] && [ $# -ne 3 ]
+	then
+		echo "multiply expects exactly two matrix arguments" 1>&2
+		exit 1
+
+	# Sees this if there are the right number of arguments
+	# But not a recognized operation name
+	else
+		echo "Not a recognized operation" 1>&2
+		exit 1
+	fi
+
+else
+	echo "Main: Invalid number of arguments." 1>&2
+	exit 1
+fi
